@@ -325,6 +325,7 @@
         <div id="multiplayerControls" style="display:none; flex-direction:column; align-items:center; gap:8px; width:100%;">
             <div id="codeDisplay" class="code-display">----</div>
             <input id="codeInput" class="code-input" maxlength="4" placeholder="CODE" style="display:none;">
+            <button class="btn resume" id="submitCodeBtn" style="display:none; width:auto; padding:6px 20px; font-size:14px;">JOIN</button>
             <div id="statusMsg" class="status-msg"></div>
             <button class="btn danger" id="cancelBtn" style="width:auto; padding:6px 20px; font-size:14px;">CANCEL</button>
         </div>
@@ -348,6 +349,7 @@
         const cancelBtn = document.getElementById('cancelBtn');
         const codeDisplay = document.getElementById('codeDisplay');
         const codeInput = document.getElementById('codeInput');
+        const submitCodeBtn = document.getElementById('submitCodeBtn');
         const statusMsg = document.getElementById('statusMsg');
         const multiplayerControls = document.getElementById('multiplayerControls');
         const playerCountNum = document.getElementById('playerCountNum');
@@ -1095,10 +1097,11 @@
             if (show) {
                 codeDisplay.style.display = isHosting ? 'block' : 'none';
                 codeInput.style.display = isHosting ? 'none' : 'block';
+                submitCodeBtn.style.display = isHosting ? 'none' : 'block';
                 if (isHosting) codeDisplay.textContent = roomCode;
                 else codeInput.value = '', codeInput.focus();
                 statusMsg.textContent = isHosting ? 'Waiting for player to join...' :
-                    'Enter 4-letter code and press Enter';
+                    'Enter 4-letter code and press Join or Enter';
             }
             document.querySelector('.menu-buttons').style.display = show ? 'none' : 'flex';
         }
@@ -1176,43 +1179,55 @@
         });
 
         // Join
+        let onJoinEnter = null;
+        let onJoinClick = null;
+        
         joinBtn.addEventListener('click', (e) => {
             e.target.blur();
             currentMode = 'join';
             isHost = false;
             showMultiplayerUI(true, false);
-            statusMsg.textContent = 'Enter 4-letter code and press Enter';
-            codeInput.addEventListener('keydown', function onEnter(e) {
-                if (e.key === 'Enter') {
-                    codeInput.removeEventListener('keydown', onEnter);
-                    const code = codeInput.value.trim().toUpperCase();
-                    if (code.length !== 4) {
-                        statusMsg.textContent = 'Code must be 4 letters.';
-                        return;
-                    }
-                    peer = new Peer();
-                    peer.on('open', (id) => {
-                        localPlayerId = id;
-                        conn = peer.connect(code);
-                        conn.on('open', () => {
-                            statusMsg.textContent = 'Connected to host! Starting game...';
-                            playerCount = 2;
-                            playerCountNum.textContent = '2';
-                            startGame();
-                        });
-                        conn.on('data', (data) => handleNetworkData(data, true));
-                        conn.on('close', () => {
-                            statusMsg.textContent = 'Disconnected from host.';
-                            playerCount = 1;
-                            playerCountNum.textContent = '1';
-                            if (remotePlayers[conn.peer]) {
-                                scene.remove(remotePlayers[conn.peer].mesh);
-                                delete remotePlayers[conn.peer];
-                            }
-                        });
-                    });
+            
+            // Clean up old listeners just in case
+            if (onJoinEnter) codeInput.removeEventListener('keydown', onJoinEnter);
+            if (onJoinClick) submitCodeBtn.removeEventListener('click', onJoinClick);
+
+            function attemptJoin() {
+                const code = codeInput.value.trim().toUpperCase();
+                if (code.length !== 4) {
+                    statusMsg.textContent = 'Code must be 4 letters.';
+                    return;
                 }
-            });
+                peer = new Peer();
+                peer.on('open', (id) => {
+                    localPlayerId = id;
+                    conn = peer.connect(code);
+                    conn.on('open', () => {
+                        statusMsg.textContent = 'Connected to host! Starting game...';
+                        playerCount = 2;
+                        playerCountNum.textContent = '2';
+                        startGame();
+                    });
+                    conn.on('data', (data) => handleNetworkData(data, true));
+                    conn.on('close', () => {
+                        statusMsg.textContent = 'Disconnected from host.';
+                        playerCount = 1;
+                        playerCountNum.textContent = '1';
+                        if (remotePlayers[conn.peer]) {
+                            scene.remove(remotePlayers[conn.peer].mesh);
+                            delete remotePlayers[conn.peer];
+                        }
+                    });
+                });
+            }
+
+            onJoinEnter = function(e) {
+                if (e.key === 'Enter') attemptJoin();
+            };
+            onJoinClick = function() { attemptJoin(); };
+
+            codeInput.addEventListener('keydown', onJoinEnter);
+            submitCodeBtn.addEventListener('click', onJoinClick);
         });
 
         // Solo
