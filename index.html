@@ -132,7 +132,8 @@
             flex-direction: column;
             color: #fff;
             backdrop-filter: blur(6px);
-            transition: opacity 0.3s;
+            transition: opacity 0.2s;
+            cursor: pointer;
         }
         #mainMenu.hidden {
             opacity: 0;
@@ -539,18 +540,9 @@
         // Pillars
         const pillarMat = new THREE.MeshStandardMaterial({ color: 0x3a404a, roughness: 0.5, metalness: 0.4 });
         const pillarPos = [
-            [-20, -20],
-            [20, -20],
-            [-20, 20],
-            [20, 20],
-            [-24, 0],
-            [24, 0],
-            [0, -24],
-            [0, 24],
-            [-12, -12],
-            [12, 12],
-            [-12, 12],
-            [12, -12]
+            [-20, -20], [20, -20], [-20, 20], [20, 20],
+            [-24, 0], [24, 0], [0, -24], [0, 24],
+            [-12, -12], [12, 12], [-12, 12], [12, -12]
         ];
         pillarPos.forEach(([x, z]) => {
             const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.8, wallHeight, 12), pillarMat);
@@ -563,8 +555,7 @@
 
         // Spawn markers
         function addSpawnMarker(x, z, color) {
-            const markerMat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.2,
-                transparent: true, opacity: 0.3 });
+            const markerMat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.2, transparent: true, opacity: 0.3 });
             const ring = new THREE.Mesh(new THREE.RingGeometry(0.5, 1.5, 32), markerMat);
             ring.rotation.x = -Math.PI / 2;
             ring.position.set(x, 0.05, z);
@@ -576,6 +567,48 @@
         }
         addSpawnMarker(0, 10, 0x44ff44);
         addSpawnMarker(0, -10, 0xff4444);
+
+        // Create Remote Player Avatar Mesh with Gun
+        function createRemotePlayerMesh(color) {
+            const group = new THREE.Group();
+            
+            // Player Body
+            const body = new THREE.Mesh(
+                new THREE.BoxGeometry(0.7, 1.5, 0.5),
+                new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.2 })
+            );
+            body.position.y = 0.75;
+            body.castShadow = true;
+            group.add(body);
+
+            // Head
+            const head = new THREE.Mesh(
+                new THREE.BoxGeometry(0.35, 0.35, 0.35),
+                new THREE.MeshStandardMaterial({ color: 0xffccaa, roughness: 0.8 })
+            );
+            head.position.y = 1.7;
+            head.castShadow = true;
+            group.add(head);
+
+            // Remote Gun Model so other players see the gun!
+            const remoteGun = new THREE.Group();
+            const gBody = new THREE.Mesh(
+                new THREE.BoxGeometry(0.08, 0.1, 0.5),
+                new THREE.MeshStandardMaterial({ color: 0x22262d, metalness: 0.8, roughness: 0.3 })
+            );
+            const gBarrel = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.02, 0.02, 0.4, 8),
+                new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.9 })
+            );
+            gBarrel.rotation.x = Math.PI / 2;
+            gBarrel.position.set(0, 0.02, -0.35);
+            remoteGun.add(gBody);
+            remoteGun.add(gBarrel);
+            remoteGun.position.set(0.25, 1.25, -0.3);
+            group.add(remoteGun);
+
+            return group;
+        }
 
         // Targets for solo
         const targets = [];
@@ -885,7 +918,7 @@
             updateHealthUI();
         }
 
-        // Network
+        // Network Data Handling with Position Lerp targets
         function handleNetworkData(data, isClient) {
             if (data.type === 'init' && isClient) {
                 if (data.spawn) camera.position.set(data.spawn.x, data.spawn.y, data.spawn.z);
@@ -898,16 +931,19 @@
                 const peerId = data.id;
                 if (!remotePlayers[peerId]) {
                     const color = isHost ? 0xff4444 : 0x44ff44;
-                    const mesh = new THREE.Mesh(
-                        new THREE.BoxGeometry(0.8, 1.8, 0.6),
-                        new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.1 })
-                    );
+                    const mesh = createRemotePlayerMesh(color);
                     mesh.position.set(data.x, data.y, data.z);
                     scene.add(mesh);
-                    remotePlayers[peerId] = { mesh, health: 100 };
+                    remotePlayers[peerId] = {
+                        mesh: mesh,
+                        targetPos: new THREE.Vector3(data.x, data.y, data.z),
+                        targetRot: data.rot || 0,
+                        health: 100
+                    };
+                } else {
+                    remotePlayers[peerId].targetPos.set(data.x, data.y, data.z);
+                    remotePlayers[peerId].targetRot = data.rot || 0;
                 }
-                remotePlayers[peerId].mesh.position.set(data.x, data.y, data.z);
-                remotePlayers[peerId].mesh.rotation.y = data.rot || 0;
                 return;
             }
             if (data.type === 'shoot') {
@@ -921,6 +957,7 @@
             if (data.type === 'respawn') {
                 if (remotePlayers[data.id]) {
                     remotePlayers[data.id].mesh.position.copy(data.spawn);
+                    remotePlayers[data.id].targetPos.copy(data.spawn);
                     remotePlayers[data.id].health = 100;
                 }
                 return;
@@ -1002,7 +1039,6 @@
             if (e.code === 'KeyA') moveState.left = true;
             if (e.code === 'KeyD') moveState.right = true;
             
-            // JUMP FIX: e.preventDefault() stops space from clicking active menu buttons
             if (e.code === 'Space') {
                 e.preventDefault();
                 if (isGrounded) {
@@ -1021,6 +1057,13 @@
                 isInspecting = true;
                 inspectTime = 0;
                 playClickSound(600, 0.05);
+            }
+            if (e.code === 'Escape' && isGameActive) {
+                if (controls.isLocked) {
+                    controls.unlock();
+                } else {
+                    controls.lock();
+                }
             }
         });
 
@@ -1124,16 +1167,51 @@
             }
         }
 
+        // Shared Connection Setup logic
+        function attachConnection(connection) {
+            conn = connection;
+            
+            const onOpen = () => {
+                statusMsg.textContent = 'Player connected! Starting game...';
+                playerCount = 2;
+                playerCountNum.textContent = '2';
+                if (isHost) {
+                    camera.position.copy(hostSpawn);
+                } else {
+                    camera.position.copy(clientSpawn);
+                }
+                startGame();
+            };
+
+            if (conn.open) {
+                onOpen();
+            } else {
+                conn.on('open', onOpen);
+            }
+
+            conn.on('data', (data) => handleNetworkData(data, !isHost));
+            conn.on('close', () => {
+                statusMsg.textContent = 'Player disconnected.';
+                playerCount = 1;
+                playerCountNum.textContent = '1';
+                if (conn && remotePlayers[conn.peer]) {
+                    scene.remove(remotePlayers[conn.peer].mesh);
+                    delete remotePlayers[conn.peer];
+                }
+            });
+        }
+
         // Resume Button Handler
         resumeBtn.addEventListener('click', (e) => {
-            e.target.blur();
+            e.stopPropagation();
+            if (e.target) e.target.blur();
             controls.lock();
         });
 
-        // Click menu background to resume if game is active
+        // Click menu to resume if game active
         mainMenu.addEventListener('click', (e) => {
             if (isGameActive && !mainMenu.classList.contains('hidden')) {
-                if (e.target === mainMenu) {
+                if (e.target === mainMenu || e.target.classList.contains('sub') || e.target.tagName === 'H1') {
                     controls.lock();
                 }
             }
@@ -1151,30 +1229,7 @@
                 showMultiplayerUI(true, true);
             });
             peer.on('connection', (incoming) => {
-                conn = incoming;
-                conn.on('open', () => {
-                    statusMsg.textContent = 'Player connected! Starting game...';
-                    playerCount = 2;
-                    playerCountNum.textContent = '2';
-                    camera.position.copy(hostSpawn);
-                    conn.send({
-                        type: 'init',
-                        spawn: clientSpawn,
-                        hostRounds: roundState.hostRounds,
-                        clientRounds: roundState.clientRounds,
-                    });
-                    startGame();
-                });
-                conn.on('data', (data) => handleNetworkData(data, false));
-                conn.on('close', () => {
-                    statusMsg.textContent = 'Player disconnected.';
-                    playerCount = 1;
-                    playerCountNum.textContent = '1';
-                    if (remotePlayers[conn.peer]) {
-                        scene.remove(remotePlayers[conn.peer].mesh);
-                        delete remotePlayers[conn.peer];
-                    }
-                });
+                attachConnection(incoming);
             });
         });
 
@@ -1188,7 +1243,6 @@
             isHost = false;
             showMultiplayerUI(true, false);
             
-            // Clean up old listeners just in case
             if (onJoinEnter) codeInput.removeEventListener('keydown', onJoinEnter);
             if (onJoinClick) submitCodeBtn.removeEventListener('click', onJoinClick);
 
@@ -1201,23 +1255,8 @@
                 peer = new Peer();
                 peer.on('open', (id) => {
                     localPlayerId = id;
-                    conn = peer.connect(code);
-                    conn.on('open', () => {
-                        statusMsg.textContent = 'Connected to host! Starting game...';
-                        playerCount = 2;
-                        playerCountNum.textContent = '2';
-                        startGame();
-                    });
-                    conn.on('data', (data) => handleNetworkData(data, true));
-                    conn.on('close', () => {
-                        statusMsg.textContent = 'Disconnected from host.';
-                        playerCount = 1;
-                        playerCountNum.textContent = '1';
-                        if (remotePlayers[conn.peer]) {
-                            scene.remove(remotePlayers[conn.peer].mesh);
-                            delete remotePlayers[conn.peer];
-                        }
-                    });
+                    const incomingConn = peer.connect(code);
+                    attachConnection(incomingConn);
                 });
             }
 
@@ -1311,10 +1350,9 @@
                 if (moveState.right) moveVec.add(right);
                 if (moveVec.lengthSq() > 0) moveVec.normalize();
 
-                // MOVEMENT SPEED FIX: Balanced max speed and acceleration
-                const maxSpeed = isCrouching ? 2.8 : 5.8;
-                const accel = 45;
-                const friction = 12;
+                const maxSpeed = isCrouching ? 3.0 : 6.2;
+                const accel = 60;
+                const friction = Math.exp(-12 * delta);
 
                 if (moveVec.lengthSq() > 0) {
                     velocity.x += moveVec.x * accel * delta;
@@ -1325,10 +1363,10 @@
                         velocity.z = (velocity.z / hSpeed) * maxSpeed;
                     }
                 } else {
-                    velocity.x *= Math.max(0, 1 - friction * delta);
-                    velocity.z *= Math.max(0, 1 - friction * delta);
-                    if (Math.abs(velocity.x) < 0.01) velocity.x = 0;
-                    if (Math.abs(velocity.z) < 0.01) velocity.z = 0;
+                    velocity.x *= friction;
+                    velocity.z *= friction;
+                    if (Math.abs(velocity.x) < 0.001) velocity.x = 0;
+                    if (Math.abs(velocity.z) < 0.001) velocity.z = 0;
                 }
 
                 // Gravity
@@ -1380,10 +1418,21 @@
                     camera.position.y += Math.sin(walkCycle) * 0.015;
                 }
 
-                // Send position
-                if (time - lastPosSend > 100 && conn && conn.open) {
+                // High rate position update (33Hz) for smooth multiplayer sync
+                if (time - lastPosSend > 30 && conn && conn.open) {
                     sendPosition();
                     lastPosSend = time;
+                }
+            }
+
+            // Interpolate Remote Player Positions smoothly across frames
+            for (let id in remotePlayers) {
+                const rp = remotePlayers[id];
+                if (rp.targetPos) {
+                    rp.mesh.position.lerp(rp.targetPos, delta * 20);
+                }
+                if (rp.targetRot !== undefined) {
+                    rp.mesh.rotation.y = THREE.MathUtils.lerp(rp.mesh.rotation.y, rp.targetRot, delta * 20);
                 }
             }
 
@@ -1423,8 +1472,9 @@
                 if (currentMode !== 'solo' && conn) {
                     for (let id in remotePlayers) {
                         const rp = remotePlayers[id];
-                        const distToPlayer = bullet.position.distanceTo(rp.mesh.position);
-                        if (distToPlayer < 0.8) {
+                        const playerCenter = rp.mesh.position.clone().add(new THREE.Vector3(0, 0.9, 0));
+                        const distToPlayer = bullet.position.distanceTo(playerCenter);
+                        if (distToPlayer < 0.9) {
                             const headshot = bullet.position.y > rp.mesh.position.y + 1.4;
                             const damage = headshot ? 50 : 25;
                             playHitSound();
