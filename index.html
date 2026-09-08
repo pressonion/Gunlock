@@ -341,7 +341,7 @@
         import * as THREE from 'three';
         import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 
-        // DOM refs
+        // DOM elements
         const mainMenu = document.getElementById('mainMenu');
         const resumeBtn = document.getElementById('resumeBtn');
         const hostBtn = document.getElementById('hostBtn');
@@ -365,8 +365,6 @@
         let isHost = false;
         let roomCode = '';
         let remotePlayers = {};
-        let localPlayerId = '';
-        let playerCount = 1;
         let isGameActive = false;
         const hostSpawn = new THREE.Vector3(0, 1.6, 10);
         const clientSpawn = new THREE.Vector3(0, 1.6, -10);
@@ -383,7 +381,7 @@
         let localHealth = 100;
         const MAX_HEALTH = 100;
 
-        // Audio
+        // Audio setup
         const audioCtx = new(window.AudioContext || window.webkitAudioContext)();
 
         function playShootSound() {
@@ -467,10 +465,8 @@
         fillLight.position.set(-10, 10, -10);
         scene.add(fillLight);
 
-        // Wall meshes for collision
-        const wallMeshes = [];
-
         // Map building
+        const wallMeshes = [];
         const arenaSize = 60;
         const wallHeight = 6.0;
         const wallThick = 0.6;
@@ -568,16 +564,16 @@
         addSpawnMarker(0, 10, 0x44ff44);
         addSpawnMarker(0, -10, 0xff4444);
 
-        // Create Remote Player Avatar Mesh with Gun
+        // Remote Player Mesh Creation
         function createRemotePlayerMesh(color) {
             const group = new THREE.Group();
             
             // Player Body
             const body = new THREE.Mesh(
-                new THREE.BoxGeometry(0.7, 1.5, 0.5),
+                new THREE.BoxGeometry(0.7, 1.3, 0.5),
                 new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.2 })
             );
-            body.position.y = 0.75;
+            body.position.y = 0.65;
             body.castShadow = true;
             group.add(body);
 
@@ -586,11 +582,11 @@
                 new THREE.BoxGeometry(0.35, 0.35, 0.35),
                 new THREE.MeshStandardMaterial({ color: 0xffccaa, roughness: 0.8 })
             );
-            head.position.y = 1.7;
+            head.position.y = 1.45;
             head.castShadow = true;
             group.add(head);
 
-            // Remote Gun Model so other players see the gun!
+            // Weapon on remote avatar facing -Z
             const remoteGun = new THREE.Group();
             const gBody = new THREE.Mesh(
                 new THREE.BoxGeometry(0.08, 0.1, 0.5),
@@ -604,13 +600,13 @@
             gBarrel.position.set(0, 0.02, -0.35);
             remoteGun.add(gBody);
             remoteGun.add(gBarrel);
-            remoteGun.position.set(0.25, 1.25, -0.3);
+            remoteGun.position.set(0.25, 1.15, -0.2);
             group.add(remoteGun);
 
             return group;
         }
 
-        // Targets for solo
+        // Targets for solo mode
         const targets = [];
         let soloScore = 0;
 
@@ -655,7 +651,7 @@
             createTarget(x, z);
         }
 
-        // Particles
+        // Particle system
         const particles = [];
 
         function createImpactParticles(pos, colorHex) {
@@ -676,7 +672,7 @@
             }
         }
 
-        // --- COLLISION SYSTEM ---
+        // Collision logic
         const playerRadius = 0.3;
 
         function isPointInsideWall(point) {
@@ -720,7 +716,7 @@
             return !isPointInsideWall(pos);
         }
 
-        // --- WEAPON ---
+        // Local First-Person Weapon Model
         const weaponGroup = new THREE.Group();
         camera.add(weaponGroup);
         scene.add(camera);
@@ -813,7 +809,7 @@
         const aimPos = new THREE.Vector3(0, -0.142, -0.22);
         weaponGroup.position.copy(hipPos);
 
-        // Controls
+        // Player Controls
         const controls = new PointerLockControls(camera, document.body);
 
         let mouseX = 0, mouseY = 0;
@@ -861,7 +857,7 @@
             }, duration);
         }
 
-        // Respawn
+        // Respawn logic
         function respawnPlayer() {
             localHealth = MAX_HEALTH;
             ammo = 25;
@@ -918,9 +914,9 @@
             updateHealthUI();
         }
 
-        // Network Data Handling with Position Lerp targets
-        function handleNetworkData(data, isClient) {
-            if (data.type === 'init' && isClient) {
+        // Network Data handling using conn.peer directly
+        function handleNetworkData(data, senderPeerId) {
+            if (data.type === 'init' && !isHost) {
                 if (data.spawn) camera.position.set(data.spawn.x, data.spawn.y, data.spawn.z);
                 roundState.hostRounds = data.hostRounds || 0;
                 roundState.clientRounds = data.clientRounds || 0;
@@ -928,20 +924,21 @@
                 return;
             }
             if (data.type === 'position') {
-                const peerId = data.id;
+                const peerId = senderPeerId || 'remote';
                 if (!remotePlayers[peerId]) {
                     const color = isHost ? 0xff4444 : 0x44ff44;
                     const mesh = createRemotePlayerMesh(color);
-                    mesh.position.set(data.x, data.y, data.z);
+                    // Adjust Y by -1.6 so mesh feet touch ground
+                    mesh.position.set(data.x, data.y - 1.6, data.z);
                     scene.add(mesh);
                     remotePlayers[peerId] = {
                         mesh: mesh,
-                        targetPos: new THREE.Vector3(data.x, data.y, data.z),
+                        targetPos: new THREE.Vector3(data.x, data.y - 1.6, data.z),
                         targetRot: data.rot || 0,
                         health: 100
                     };
                 } else {
-                    remotePlayers[peerId].targetPos.set(data.x, data.y, data.z);
+                    remotePlayers[peerId].targetPos.set(data.x, data.y - 1.6, data.z);
                     remotePlayers[peerId].targetRot = data.rot || 0;
                 }
                 return;
@@ -955,10 +952,12 @@
                 return;
             }
             if (data.type === 'respawn') {
-                if (remotePlayers[data.id]) {
-                    remotePlayers[data.id].mesh.position.copy(data.spawn);
-                    remotePlayers[data.id].targetPos.copy(data.spawn);
-                    remotePlayers[data.id].health = 100;
+                const peerId = senderPeerId || 'remote';
+                if (remotePlayers[peerId]) {
+                    const respawnPos = new THREE.Vector3(data.spawn.x, data.spawn.y - 1.6, data.spawn.z);
+                    remotePlayers[peerId].mesh.position.copy(respawnPos);
+                    remotePlayers[peerId].targetPos.copy(respawnPos);
+                    remotePlayers[peerId].health = 100;
                 }
                 return;
             }
@@ -1032,7 +1031,7 @@
             }
         }
 
-        // Key Listeners
+        // Input Listeners
         document.addEventListener('keydown', (e) => {
             if (e.code === 'KeyW') moveState.forward = true;
             if (e.code === 'KeyS') moveState.backward = true;
@@ -1167,13 +1166,12 @@
             }
         }
 
-        // Shared Connection Setup logic
+        // Peer Connection binding
         function attachConnection(connection) {
             conn = connection;
             
             const onOpen = () => {
                 statusMsg.textContent = 'Player connected! Starting game...';
-                playerCount = 2;
                 playerCountNum.textContent = '2';
                 if (isHost) {
                     camera.position.copy(hostSpawn);
@@ -1189,10 +1187,9 @@
                 conn.on('open', onOpen);
             }
 
-            conn.on('data', (data) => handleNetworkData(data, !isHost));
+            conn.on('data', (data) => handleNetworkData(data, conn.peer));
             conn.on('close', () => {
                 statusMsg.textContent = 'Player disconnected.';
-                playerCount = 1;
                 playerCountNum.textContent = '1';
                 if (conn && remotePlayers[conn.peer]) {
                     scene.remove(remotePlayers[conn.peer].mesh);
@@ -1217,14 +1214,14 @@
             }
         });
 
-        // Host
+        // Host button
         hostBtn.addEventListener('click', (e) => {
             e.target.blur();
             currentMode = 'host';
             isHost = true;
             roomCode = generateCode();
             peer = new Peer(roomCode);
-            peer.on('open', (id) => {
+            peer.on('open', () => {
                 statusMsg.textContent = 'Hosting room: ' + roomCode + ' - Waiting for player...';
                 showMultiplayerUI(true, true);
             });
@@ -1233,7 +1230,7 @@
             });
         });
 
-        // Join
+        // Join button
         let onJoinEnter = null;
         let onJoinClick = null;
         
@@ -1253,8 +1250,7 @@
                     return;
                 }
                 peer = new Peer();
-                peer.on('open', (id) => {
-                    localPlayerId = id;
+                peer.on('open', () => {
                     const incomingConn = peer.connect(code);
                     attachConnection(incomingConn);
                 });
@@ -1269,13 +1265,12 @@
             submitCodeBtn.addEventListener('click', onJoinClick);
         });
 
-        // Solo
+        // Solo button
         soloBtn.addEventListener('click', (e) => {
             e.target.blur();
             currentMode = 'solo';
             isHost = false;
             roomCode = '';
-            playerCount = 1;
             playerCountNum.textContent = '1';
             camera.position.copy(hostSpawn);
             localHealth = MAX_HEALTH;
@@ -1283,32 +1278,35 @@
             startGame();
         });
 
-        // Cancel
+        // Cancel button
         cancelBtn.addEventListener('click', (e) => {
             e.target.blur();
             if (peer) { peer.destroy(); peer = null; }
             if (conn) { conn.close(); conn = null; }
             remotePlayers = {};
-            playerCount = 1;
             playerCountNum.textContent = '1';
             showMultiplayerUI(false, false);
             document.querySelector('.menu-buttons').style.display = 'flex';
             statusMsg.textContent = '';
         });
 
-        // Send position
+        // Send local position and camera yaw orientation vector
         let lastPosSend = 0;
 
         function sendPosition() {
             if (!conn || !conn.open) return;
             const pos = camera.position;
+            const dir = new THREE.Vector3();
+            camera.getWorldDirection(dir);
+            // Derive yaw so avatar mesh faces exact camera target direction
+            const yaw = Math.atan2(dir.x, dir.z) + Math.PI;
+
             conn.send({
                 type: 'position',
-                id: peer ? peer.id : 'local',
                 x: pos.x,
                 y: pos.y,
                 z: pos.z,
-                rot: camera.rotation.y
+                rot: yaw
             });
         }
 
@@ -1326,7 +1324,7 @@
             }
         });
 
-        // Game loop
+        // Game animation loop
         let prevTime = performance.now();
 
         function animate() {
@@ -1335,7 +1333,7 @@
             const delta = Math.min((time - prevTime) / 1000, 0.1);
 
             if (controls.isLocked && !roundState.isGameOver) {
-                // --- MOVEMENT ---
+                // Movement vector calculation
                 const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
                 forward.y = 0;
                 forward.normalize();
@@ -1369,13 +1367,11 @@
                     if (Math.abs(velocity.z) < 0.001) velocity.z = 0;
                 }
 
-                // Gravity
                 yVelocity -= GRAVITY * delta;
 
-                // Compute new position step by step
                 let newPos = camera.position.clone();
 
-                // Try X
+                // Move X axis
                 let testX = new THREE.Vector3(newPos.x + velocity.x * delta, newPos.y, newPos.z);
                 if (canMoveTo(testX)) {
                     newPos.x = testX.x;
@@ -1383,7 +1379,7 @@
                     velocity.x = 0;
                 }
 
-                // Try Z
+                // Move Z axis
                 let testZ = new THREE.Vector3(newPos.x, newPos.y, newPos.z + velocity.z * delta);
                 if (canMoveTo(testZ)) {
                     newPos.z = testZ.z;
@@ -1391,7 +1387,7 @@
                     velocity.z = 0;
                 }
 
-                // Vertical
+                // Vertical step
                 newPos.y += yVelocity * delta;
                 const targetHeight = isCrouching ? CROUCH_HEIGHT : STAND_HEIGHT;
                 if (newPos.y <= targetHeight) {
@@ -1402,15 +1398,14 @@
                     isGrounded = false;
                 }
 
-                // Clamp to arena
+                // Map boundary clamp
                 const halfArena = arenaSize / 2 - 0.5;
                 newPos.x = Math.max(-halfArena, Math.min(halfArena, newPos.x));
                 newPos.z = Math.max(-halfArena, Math.min(halfArena, newPos.z));
 
-                // Apply
                 camera.position.copy(newPos);
 
-                // Walk bob
+                // Walk head bob
                 const isMoving = (moveState.forward || moveState.backward || moveState.left || moveState.right) &&
                     isGrounded && velocity.lengthSq() > 0.5;
                 if (isMoving) {
@@ -1418,14 +1413,14 @@
                     camera.position.y += Math.sin(walkCycle) * 0.015;
                 }
 
-                // High rate position update (33Hz) for smooth multiplayer sync
+                // Sync position packet (33Hz)
                 if (time - lastPosSend > 30 && conn && conn.open) {
                     sendPosition();
                     lastPosSend = time;
                 }
             }
 
-            // Interpolate Remote Player Positions smoothly across frames
+            // Interpolate Remote Player Positions smoothly
             for (let id in remotePlayers) {
                 const rp = remotePlayers[id];
                 if (rp.targetPos) {
@@ -1436,7 +1431,7 @@
                 }
             }
 
-            // Weapon sway
+            // First-person weapon sway
             const targetPos = isScoped ? aimPos : hipPos;
             const swayX = THREE.MathUtils.clamp(-mouseX * 0.0003, -0.03, 0.03);
             const swayY = THREE.MathUtils.clamp(-mouseY * 0.0003, -0.03, 0.03);
@@ -1445,13 +1440,12 @@
             const finalWeaponPos = targetPos.clone().add(new THREE.Vector3(swayX, swayY, 0));
             weaponGroup.position.lerp(finalWeaponPos, delta * 15);
 
-            // --- BULLETS ---
+            // Bullets update & collision
             for (let i = bullets.length - 1; i >= 0; i--) {
                 const bullet = bullets[i];
                 const prevPos = bullet.position.clone();
                 bullet.position.addScaledVector(bullet.userData.velocity, delta);
 
-                // Wall collision via raycast
                 const raycaster = new THREE.Raycaster();
                 raycaster.set(prevPos, bullet.userData.direction);
                 const dist = prevPos.distanceTo(bullet.position);
@@ -1468,14 +1462,15 @@
                 }
                 if (hitWall) continue;
 
-                // Hit remote players
+                // Remote players hit test
                 if (currentMode !== 'solo' && conn) {
                     for (let id in remotePlayers) {
                         const rp = remotePlayers[id];
+                        // Target center at body chest height
                         const playerCenter = rp.mesh.position.clone().add(new THREE.Vector3(0, 0.9, 0));
                         const distToPlayer = bullet.position.distanceTo(playerCenter);
                         if (distToPlayer < 0.9) {
-                            const headshot = bullet.position.y > rp.mesh.position.y + 1.4;
+                            const headshot = bullet.position.y > rp.mesh.position.y + 1.3;
                             const damage = headshot ? 50 : 25;
                             playHitSound();
                             triggerHitmarker();
@@ -1494,7 +1489,7 @@
                     }
                 }
 
-                // Hit targets (solo)
+                // Target hit test (solo mode)
                 if (currentMode === 'solo') {
                     for (let t = 0; t < targets.length; t++) {
                         const tgt = targets[t];
@@ -1532,7 +1527,6 @@
                     }
                 }
 
-                // Out of bounds
                 if (bullet.position.y <= 0 || bullet.position.length() > 120) {
                     if (bullet.position.y <= 0) createImpactParticles(bullet.position, 0xffaa66);
                     scene.remove(bullet);
@@ -1540,7 +1534,7 @@
                 }
             }
 
-            // Particles
+            // Particle decay
             for (let p = particles.length - 1; p >= 0; p--) {
                 const part = particles[p];
                 part.position.addScaledVector(part.userData.velocity, delta);
